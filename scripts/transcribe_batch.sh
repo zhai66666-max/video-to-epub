@@ -39,13 +39,29 @@ for v in *.mp4 *.mov *.mkv *.flv *.avi *.mp3 *.wav *.m4a *.aac *.flac *.ogg; do
     -of "$TMP_WAV/${base}" 2>/dev/null || true
 
   # 完整性检查: 比较音频时长与转写覆盖的末段时间戳
+  # 兼容两种 whisper-cli JSON 结构:
+  #   旧版: top.segments[].end (秒)
+  #   新版: top.transcription[] = {timestamps:{from,to}, offsets:{from,to(毫秒)}, text}
   PYBIN="${PYBIN:-python3}"
   LAST_END=$("$PYBIN" -c "
 import json
 try:
     d = json.load(open('$TMP_WAV/${base}.json'))
-    segs = d.get('segments', d.get('transcription', {}).get('segments', []))
-    print(max((s.get('end', 0) for s in segs), default=0))
+    segs = d.get('segments')
+    if segs is None:
+        t = d.get('transcription')
+        segs = t if isinstance(t, list) else (t or {}).get('segments')
+    last = 0.0
+    for s in (segs or []):
+        if not isinstance(s, dict):
+            continue
+        off = s.get('offsets') or {}
+        if isinstance(off, dict) and 'to' in off:
+            v = off['to'] / 1000.0  # 新版单位为毫秒
+            last = max(last, v)
+        elif 'end' in s:
+            last = max(last, float(s['end']))  # 旧版单位为秒
+    print(round(last, 1))
 except Exception:
     print(0)
 ")
